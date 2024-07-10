@@ -2,7 +2,6 @@ import bs4
 import os
 import time
 import random
-import uuid
 from langchain_community.document_loaders import WebBaseLoader, AzureAIDocumentIntelligenceLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
@@ -23,7 +22,7 @@ class ragProcessor():
 
         self.client = DataAPIClient(os.getenv(
             "ASTRA_DB_APPLICATION_TOKEN"))
-        self.database = self.client.get_database(
+        self.database = self.client.get_database_by_api_endpoint(
             os.getenv("ASTRA_DB_API_ENDPOINT"))
 
         self.file_path = file_path
@@ -39,34 +38,26 @@ class ragProcessor():
         self.collection = self.database.create_collection(
             "chat_w_document",
             dimension=1408,
-            metric=VectorMetric.COSINE,  # or simply "cosine"
+            metric=VectorMetric.COSINE,
             check_exists=False,
         )
 
     def generate_uuid7(self):
-        # Get the current time in milliseconds
         timestamp = int(time.time() * 1000)
 
-        # Split the timestamp into high and low bits
         timestamp_high = (timestamp >> 28) & 0xFFFFFFFF
         timestamp_low = timestamp & 0xFFFF
 
-        # Generate 128-bit random value
         random_bits = random.getrandbits(128)
 
-        # Format the UUIDv7 parts
         uuid7_parts = [
-            # First 8 hex digits from the high part of the timestamp
             f'{timestamp_high:08x}',
-            # Next 7 hex digits from the low part of the timestamp
             f'{timestamp_low:04x}',
-            '7913',                    # Fixed version part for this example
-            '89f8',                    # Fixed variant part for this example
-            # Remaining 16 hex digits from the random bits
+            '7913',
+            '89f8',
             f'{random_bits & 0xFFFFFFFFFFFF:012x}'
         ]
 
-        # Assemble the UUIDv7 string
         uuid7_str = '-'.join(uuid7_parts)
         return uuid7_str
 
@@ -86,13 +77,28 @@ class ragProcessor():
         )
 
         chunks = text_splitter.split_documents(documents)
+        print("Text splitting complete")
 
-        embeddings = self.embeddings.embed_documents(str(chunks))
-        vectors = [{
-            "_id": self.generate_uuid7(),
-            "text": chunks,
-            "$vector": embeddings
-        }]
+        vectors = []
+        for chunk in chunks:
+            embedding = self.embeddings.embed_documents(str(chunk))
+            # Debugging line to inspect embedding
+            print("Embedding: ", embedding)
+            if isinstance(embedding, list) and all(isinstance(e, list) for e in embedding):
+                # Assuming embed_documents returns a list of lists, take the first one
+                embedding = embedding[0]
+            elif not isinstance(embedding, list) or not all(isinstance(e, (int, float)) for e in embedding):
+                raise ValueError("Embedding must be a list of numbers")
+
+            vector = {
+                "_id": self.generate_uuid7,
+                "text": chunk,
+                "$vector": embedding
+            }
+            vectors.append(vector)
+            print("One vectorization Complete")
+
+        print("Total Vectorization Complete")
 
         try:
             self.collection.insert_many(vectors)
