@@ -5,10 +5,12 @@ import random
 from langchain_community.document_loaders import WebBaseLoader, AzureAIDocumentIntelligenceLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain_google_genai import GoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_community.llms import Ollama
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import OllamaEmbeddings
 from astrapy import DataAPIClient
+from langchain_astradb import AstraDBVectorStore
 from astrapy.constants import VectorMetric
 from astrapy.ids import UUID
 from astrapy.exceptions import InsertManyException
@@ -18,7 +20,7 @@ from dotenv import load_dotenv
 class ragProcessor():
     def __init__(self, file_path, user_query=""):
 
-        load_dotenv("../config.env")
+        load_dotenv("./config.env")
 
         self.client = DataAPIClient(os.getenv(
             "ASTRA_DB_APPLICATION_TOKEN"))
@@ -27,39 +29,11 @@ class ragProcessor():
 
         self.file_path = file_path
 
-        self.embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001")
+        self.embeddings = OllamaEmbeddings(model="nomic-embed-text")
 
         self.user_query = self.embeddings.embed_query(user_query)
 
-        self.llm = GoogleGenerativeAI(
-            model="gemini-pro", google_api_key=os.getenv("GOOGLE_API_KEY"))
-
-        self.collection = self.database.create_collection(
-            "chat_w_document",
-            dimension=1408,
-            metric=VectorMetric.COSINE,
-            check_exists=False,
-        )
-
-    def generate_uuid7(self):
-        timestamp = int(time.time() * 1000)
-
-        timestamp_high = (timestamp >> 28) & 0xFFFFFFFF
-        timestamp_low = timestamp & 0xFFFF
-
-        random_bits = random.getrandbits(128)
-
-        uuid7_parts = [
-            f'{timestamp_high:08x}',
-            f'{timestamp_low:04x}',
-            '7913',
-            '89f8',
-            f'{random_bits & 0xFFFFFFFFFFFF:012x}'
-        ]
-
-        uuid7_str = '-'.join(uuid7_parts)
-        return uuid7_str
+        self.llm = Ollama(model="llama3.1")
 
     def load_vectorize_data(self):
         # Load data from the file
@@ -69,9 +43,16 @@ class ragProcessor():
 
         documents = loader.load()
 
+        # Calculate chunk size based on document length, e.g., 10% of document length
+        chunk_size = max(200, int(len(documents) * 0.1))
+
+        # Calculate chunk overlap based on chunk size, e.g., 5% of chunk size
+        chunk_overlap = int(chunk_size * 0.05)
+
+        # Split the text into chunks
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=4000,
-            chunk_overlap=20,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
             length_function=len,
             add_start_index=True,
         )
